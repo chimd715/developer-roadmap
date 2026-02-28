@@ -1,0 +1,78 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Run daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (check only, no sync)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/kamranahmedse/developer-roadmap.git
+          git fetch upstream master
+
+      - name: Check commits behind
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/master)
+          AHEAD=$(git rev-list --count upstream/master..HEAD)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "ahead=$AHEAD" >> $GITHUB_OUTPUT
+          echo "📊 Fork Status:"
+          echo "  - Commits behind upstream: $BEHIND"
+          echo "  - Commits ahead of upstream: $AHEAD"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "status=up-to-date" >> $GITHUB_OUTPUT
+            echo "✅ Fork is up to date with upstream!"
+          else
+            echo "status=behind" >> $GITHUB_OUTPUT
+            echo "⚠️ Fork is $BEHIND commits behind upstream"
+          fi
+
+      - name: Sync with upstream
+        if: steps.check.outputs.status == 'behind' && inputs.dry_run != 'true'
+        run: |
+          echo "🔄 Syncing fork with upstream..."
+          git merge upstream/master --no-edit
+          git push origin master
+          echo "✅ Successfully synced with upstream!"
+
+      - name: Create summary
+        run: |
+          echo "## Fork Sync Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Commits Behind | ${{ steps.check.outputs.behind }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commits Ahead | ${{ steps.check.outputs.ahead }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ steps.check.outputs.status }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.check.outputs.status }}" == "behind" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Fork has been synced with upstream!**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ inputs.dry_run }}" == "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "ℹ️ **Dry run mode - no changes made**" >> $GITHUB_STEP_SUMMARY
+          fi
